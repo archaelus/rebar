@@ -1,2 +1,2 @@
-{variables, [{srvid, "myserver"}]}.
+{variables, [{srvid, "myserver"}, {appid, "myapp"}]}.
 {template, "simplesrv.erl", "src/{{srvid}}.erl"}.
