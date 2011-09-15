@@ -1,12 +1,12 @@
 {application, {{appid}},
  [{description, ""}
-  ,{vsn, "1"},
-  ,{registered, []},
+  ,{vsn, "1"}
+  ,{registered, []}
   ,{applications,
     [kernel
      ,stdlib
-    ]},
-  ,{mod, { {{appid}}_app, []}},
+    ]}
+  ,{mod, { {{appid}}_app, []}}
   ,{env,
     [
     ]}
