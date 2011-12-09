@@ -102,7 +102,7 @@ process_dir(Dir, ParentConfig, Command, DirSet) ->
         true ->
             ?DEBUG("Entering ~s\n", [Dir]),
             ok = file:set_cwd(Dir),
-            Config = rebar_config:new(ParentConfig),
+            Config = maybe_load_local_config(Dir, ParentConfig),
 
             %% Save the current code path and then update it with
             %% lib_dirs. Children inherit parents code path, but we
@@ -128,8 +128,18 @@ process_dir(Dir, ParentConfig, Command, DirSet) ->
             %% Invoke 'preprocess' on the modules -- this yields a list of other
             %% directories that should be processed _before_ the current one.
             Predirs = acc_modules(Modules, preprocess, Config, ModuleSetFile),
-            ?DEBUG("Predirs: ~p\n", [Predirs]),
-            DirSet2 = process_each(Predirs, Command, Config,
+
+            %% Get the list of plug-in modules from rebar.config. These
+            %% modules may participate in preprocess and postprocess.
+            {ok, PluginModules} = plugin_modules(Config),
+
+            PluginPredirs = acc_modules(PluginModules, preprocess,
+                                        Config, ModuleSetFile),
+
+            AllPredirs = Predirs ++ PluginPredirs,
+
+            ?DEBUG("Predirs: ~p\n", [AllPredirs]),
+            DirSet2 = process_each(AllPredirs, Command, Config,
                                    ModuleSetFile, DirSet),
 
             %% Make sure the CWD is reset properly; processing the dirs may have
@@ -144,11 +154,6 @@ process_dir(Dir, ParentConfig, Command, DirSet) ->
                     ?INFO("Skipping ~s in ~s\n", [Command, Dir]);
 
                 false ->
-                    %% Get the list of plug-in modules from rebar.config. These
-                    %% modules are processed LAST and do not participate
-                    %% in preprocess.
-                    {ok, PluginModules} = plugin_modules(Config),
-
                     %% Execute any before_command plugins on this directory
                     execute_pre(Command, PluginModules,
                                 Config, ModuleSetFile),
@@ -167,7 +172,8 @@ process_dir(Dir, ParentConfig, Command, DirSet) ->
 
             %% Invoke 'postprocess' on the modules. This yields a list of other
             %% directories that should be processed _after_ the current one.
-            Postdirs = acc_modules(Modules, postprocess, Config, ModuleSetFile),
+            Postdirs = acc_modules(Modules ++ PluginModules, postprocess,
+                                   Config, ModuleSetFile),
             ?DEBUG("Postdirs: ~p\n", [Postdirs]),
             DirSet4 = process_each(Postdirs, Command, Config,
                                    ModuleSetFile, DirSet3),
@@ -184,7 +190,18 @@ process_dir(Dir, ParentConfig, Command, DirSet) ->
             DirSet4
     end.
 
+maybe_load_local_config(Dir, ParentConfig) ->
+    %% We need to ensure we don't overwrite custom
+    %% config when we are dealing with base_dir.
+    case processing_base_dir(Dir) of
+        true ->
+            ParentConfig;
+        false ->
+            rebar_config:new(ParentConfig)
+    end.
 
+processing_base_dir(Dir) ->
+    Dir == rebar_config:get_global(base_dir, undefined).
 
 %%
 %% Given a list of directories and a set of previously processed directories,
@@ -337,8 +354,17 @@ run_modules([Module | Rest], Command, Config, File) ->
 apply_hooks(Mode, Config, Command, Env) ->
     Hooks = rebar_config:get_local(Config, Mode, []),
     lists:foreach(fun apply_hook/1,
-                  [{Env, Hook} || Hook <- Hooks, element(1, Hook) =:= Command]).
+                  [{Env, Hook} || Hook <- Hooks,
+                                  element(1, Hook) =:= Command orelse
+                                      element(2, Hook) =:= Command]).
 
+apply_hook({Env, {Arch, Command, Hook}}) ->
+    case rebar_utils:is_arch(Arch) of
+        true ->
+            apply_hook({Env, {Command, Hook}});
+        false ->
+            ok
+    end;
 apply_hook({Env, {Command, Hook}}) ->
     Msg = lists:flatten(io_lib:format("Command [~p] failed!~n", [Command])),
     rebar_utils:sh(Hook, [{env, Env}, {abort_on_error, Msg}]).
@@ -392,7 +418,7 @@ plugin_modules(Config, FoundModules, MissingModules) ->
     case NotLoaded =/= [] of
         true ->
             %% NB: we continue to ignore this situation, as did the original code
-            ?WARN("Missing plugins: ~p\n", NotLoaded);
+            ?WARN("Missing plugins: ~p\n", [NotLoaded]);
         false ->
             ?DEBUG("Loaded plugins: ~p~n", [AllViablePlugins]),
             ok

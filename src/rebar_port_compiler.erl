@@ -86,28 +86,39 @@
 %%               {port_envs, [{"x86_64.*-linux", "CFLAGS",
 %%                             "$CFLAGS -X86Options"}]}
 %%
-%% * port_pre_script - Tuple which specifies a pre-compilation script to run,
-%%                     and a filename that exists as a result of the script
-%%                     running.
-%%
-%% * port_cleanup_script - String that specifies a script to run during cleanup.
-%%                         Use this to remove files/directories created by
-%%                         port_pre_script.
-%%
 
 compile(Config, AppFile) ->
+    %% Allow the user to specify that dependent files get built first
+    FirstFiles = expand_sources(rebar_config:get(Config,
+                                                 port_first_files, []), []),
+
     %% Compose list of sources from config file -- defaults to c_src/*.c
     Sources = expand_sources(rebar_config:get_list(Config, port_sources,
                                                    ["c_src/*.c"]), []),
+    Env = setup_env(Config),
+
+    {FirstNewBins, FirstExistingBins} = case FirstFiles of
+                                            [] ->
+                                                {[], []};
+                                            _ ->
+                                            compile_each(FirstFiles, Config,
+                                                         Env, [], [])
+                                        end,
     case Sources of
         [] ->
             ok;
         _ ->
-            Env = setup_env(Config),
+
+            %% Remove first files from found files
+            RestFiles = [Source || Source <- Sources,
+                                   not lists:member(Source, FirstFiles)],
 
             %% Compile each of the sources
-            {NewBins, ExistingBins} = compile_each(Sources, Config, Env,
-                                                   [], []),
+            {NewBins, ExistingBins} = compile_each(RestFiles, Config, Env,
+                                                     [], []),
+
+            NewBins = FirstNewBins ++ NewBins,
+            ExistingBins = FirstExistingBins ++ ExistingBins,
 
             %% Construct the driver name and make sure priv/ exists
             SoSpecs = so_specs(Config, AppFile, NewBins ++ ExistingBins),
@@ -154,13 +165,23 @@ setup_env(Config) ->
     %% max flexibility for users.
     DefaultEnvs  = filter_envs(default_env(), []),
     PortEnvs = rebar_config:get_list(Config, port_envs, []),
-    OverrideEnvs = filter_envs(PortEnvs, []),
+    OverrideEnvs = global_defines() ++ filter_envs(PortEnvs, []),
     RawEnv = apply_defaults(os_env(), DefaultEnvs) ++ OverrideEnvs,
     expand_vars_loop(merge_each_var(RawEnv, [])).
 
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+global_defines() ->
+    [begin
+         case string:tokens(D, "=") of
+             [Var, Val] ->
+                 {Var, Val};
+             [Def] ->
+                 {Def, "1"}
+         end
+     end || D <- rebar_config:get_global(defines, [])].
 
 expand_sources([], Acc) ->
     Acc;
@@ -280,38 +301,55 @@ merge_each_var([{Key, Value} | Rest], Vars) ->
 %% for every other key until no further expansions are possible.
 %%
 expand_vars_loop(Vars) ->
-    expand_vars_loop(Vars, 10).
+    expand_vars_loop(Vars, [], dict:from_list(Vars), 10).
 
-expand_vars_loop(_, 0) ->
+expand_vars_loop(_Pending, _Recurse, _Vars, 0) ->
     ?ABORT("Max. expansion reached for ENV vars!\n", []);
-expand_vars_loop(Vars0, Count) ->
-    Vars = lists:foldl(fun({Key, Value}, Acc) ->
-                               expand_vars(Key, Value, Acc)
-                       end,
-                       Vars0, Vars0),
-    case orddict:from_list(Vars) of
-        Vars0 ->
-            Vars0;
-        _ ->
-            expand_vars_loop(Vars, Count-1)
+expand_vars_loop([], [], Vars, _Count) ->
+    lists:keysort(1, dict:to_list(Vars));
+expand_vars_loop([], Recurse, Vars, Count) ->
+    expand_vars_loop(Recurse, [], Vars, Count-1);
+expand_vars_loop([{K, V} | Rest], Recurse, Vars, Count) ->
+    %% Identify the variables that need expansion in this value
+    ReOpts = [global, {capture, all_but_first, list}],
+    case re:run(V, "\\\${?(\\w+)}?", ReOpts) of
+        {match, Matches} ->
+            %% Identify the unique variables that need to be expanded
+            UniqueMatches = lists:usort([M || [M] <- Matches]),
+
+            %% For each variable, expand it and return the final
+            %% value. Note that if we have a bunch of unresolvable
+            %% variables, nothing happens and we don't bother
+            %% attempting further expansion
+            case expand_keys_in_value(UniqueMatches, V, Vars) of
+                V ->
+                    %% No change after expansion; move along
+                    expand_vars_loop(Rest, Recurse, Vars, Count);
+                Expanded ->
+                    %% Some expansion occurred; move to next k/v but
+                    %% revisit this value in the next loop to check
+                    %% for further expansion
+                    NewVars = dict:store(K, Expanded, Vars),
+                    expand_vars_loop(Rest, [{K, Expanded} | Recurse],
+                                     NewVars, Count)
+            end;
+
+        nomatch ->
+            %% No values in this variable need expansion; move along
+            expand_vars_loop(Rest, Recurse, Vars, Count)
     end.
 
-%%
-%% Expand all OTHER references to a given K/V pair
-%%
-expand_vars(Key, Value, Vars) ->
-    lists:foldl(
-      fun({AKey, AValue}, Acc) ->
-              NewValue = case AKey of
-                             Key ->
-                                 AValue;
-                             _ ->
-                                 rebar_utils:expand_env_variable(AValue,
-                                                                 Key, Value)
-                         end,
-              [{AKey, NewValue} | Acc]
-      end,
-      [], Vars).
+expand_keys_in_value([], Value, _Vars) ->
+    Value;
+expand_keys_in_value([Key | Rest], Value, Vars) ->
+    NewValue = case dict:find(Key, Vars) of
+                   {ok, KValue} ->
+                       rebar_utils:expand_env_variable(Value, Key, KValue);
+                   error ->
+                       Value
+               end,
+    expand_keys_in_value(Rest, NewValue, Vars).
+
 
 expand_command(TmplName, Env, InFiles, OutFile) ->
     Cmd0 = proplists:get_value(TmplName, Env),
@@ -354,6 +392,14 @@ os_env() ->
     %% Drop variables without a name (win32)
     [T1 || {K, _V} = T1 <- Os, K =/= []].
 
+erl_interface_dir(Subdir) ->
+    case code:lib_dir(erl_interface, Subdir) of
+        {error, bad_name} ->
+            throw({error, {erl_interface,Subdir,"code:lib_dir(erl_interface)"
+                           "is unable to find the erl_interface library."}});
+        Dir -> Dir
+    end.
+
 default_env() ->
     [
      {"CXX_TEMPLATE",
@@ -364,13 +410,13 @@ default_env() ->
       "$CC $PORT_IN_FILES $LDFLAGS $DRV_LDFLAGS -o $PORT_OUT_FILE"},
      {"CC", "cc"},
      {"CXX", "c++"},
-     {"ERL_CFLAGS", lists:concat([" -I", code:lib_dir(erl_interface, include),
+     {"ERL_CFLAGS", lists:concat([" -I", erl_interface_dir(include),
                                   " -I", filename:join(erts_dir(), "include"),
                                   " "])},
      {"ERL_LDFLAGS", " -L$ERL_EI_LIBDIR -lerl_interface -lei"},
      {"DRV_CFLAGS", "-g -Wall -fPIC $ERL_CFLAGS"},
      {"DRV_LDFLAGS", "-shared $ERL_LDFLAGS"},
-     {"ERL_EI_LIBDIR", code:lib_dir(erl_interface, lib)},
+     {"ERL_EI_LIBDIR", erl_interface_dir(lib)},
      {"darwin", "DRV_LDFLAGS",
       "-bundle -flat_namespace -undefined suppress $ERL_LDFLAGS"},
      {"ERLANG_ARCH", rebar_utils:wordsize()},

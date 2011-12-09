@@ -281,7 +281,7 @@ cover_analyze(Config, Modules, SrcModules) ->
                       end,
 
     %% Generate coverage info for all the cover-compiled modules
-    Coverage = [cover_analyze_mod(M) || M <- FilteredModules],
+    Coverage = lists:flatten([cover_analyze_mod(M) || M <- FilteredModules]),
 
     %% Write index of coverage info
     cover_write_index(lists:sort(Coverage), SrcModules),
@@ -364,12 +364,12 @@ cover_analyze_mod(Module) ->
             %% test/0 fun, which cover considers a runnable line, but
             %% eunit:test(TestRepresentation) never calls.  Decrement
             %% NotCovered in this case.
-            align_notcovered_count(Module, Covered, NotCovered,
-                                   is_eunitized(Module));
+            [align_notcovered_count(Module, Covered, NotCovered,
+                                    is_eunitized(Module))];
         {error, Reason} ->
             ?ERROR("Cover analyze failed for ~p: ~p ~p\n",
                    [Module, Reason, code:which(Module)]),
-            {0,0}
+            []
     end.
 
 is_eunitized(Mod) ->
@@ -484,9 +484,6 @@ reset_after_eunit({OldProcesses, WasAlive, OldAppEnvs, _OldACs}) ->
             ok
     end,
 
-    Processes = erlang:processes(),
-    _ = kill_extras(Processes -- OldProcesses),
-
     OldApps = [App || {App, _} <- OldAppEnvs],
     Apps = get_app_names(),
     _ = [begin
@@ -499,6 +496,10 @@ reset_after_eunit({OldProcesses, WasAlive, OldAppEnvs, _OldACs}) ->
                 {K, _V} <- application:get_all_env(App)],
 
     reconstruct_app_env_vars(Apps),
+
+    Processes = erlang:processes(),
+    _ = kill_extras(Processes -- OldProcesses),
+
     ok.
 
 kill_extras(Pids) ->

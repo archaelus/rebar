@@ -27,6 +27,7 @@
 -module(rebar_reltool).
 
 -export([generate/2,
+         overlay/2,
          clean/2]).
 
 -include("rebar.hrl").
@@ -64,6 +65,10 @@ generate(Config, ReltoolFile) ->
             ?FAIL
     end.
 
+overlay(_Config, ReltoolFile) ->
+    %% Load the reltool configuration from the file
+    ReltoolConfig = rebar_rel_utils:load_config(ReltoolFile),
+    process_overlay(ReltoolConfig).
 
 clean(_Config, ReltoolFile) ->
     ReltoolConfig = rebar_rel_utils:load_config(ReltoolFile),
@@ -91,6 +96,36 @@ check_vsn() ->
                 false ->
                     ok
             end
+    end.
+
+process_overlay(ReltoolConfig) ->
+    TargetDir = rebar_rel_utils:get_target_dir(ReltoolConfig),
+
+    {_BootRelName, BootRelVsn} =
+        rebar_rel_utils:get_reltool_release_info(ReltoolConfig),
+
+    %% Initialize overlay vars with some basics
+    %% (that can get overwritten)
+    OverlayVars0 =
+        dict:from_list([{erts_vsn, "erts-" ++ erlang:system_info(version)},
+                        {rel_vsn, BootRelVsn},
+                        {target_dir, TargetDir}]),
+
+    %% Load up any variables specified by overlay_vars
+    OverlayVars1 = overlay_vars(OverlayVars0, ReltoolConfig),
+    OverlayVars = rebar_templater:resolve_variables(dict:to_list(OverlayVars1),
+                                                    OverlayVars1),
+
+    %% Finally, overlay the files specified by the overlay section
+    case lists:keyfind(overlay, 1, ReltoolConfig) of
+        {overlay, Overlay} when is_list(Overlay) ->
+            execute_overlay(Overlay, OverlayVars, rebar_utils:get_cwd(),
+                            TargetDir);
+        false ->
+            ?INFO("No {overlay, [...]} found in reltool.config.\n", []);
+        _ ->
+            ?ABORT("{overlay, [...]} entry in reltool.config "
+                   "must be a list.\n", [])
     end.
 
 %%
@@ -161,11 +196,14 @@ run_reltool(Server, _Config, ReltoolConfig) ->
             TargetDir = rebar_rel_utils:get_target_dir(ReltoolConfig),
             mk_target_dir(TargetDir),
 
+            %% Determine the otp root dir to use
+            RootDir = rebar_rel_utils:get_root_dir(ReltoolConfig),
+
             %% Dump the spec, if necessary
             dump_spec(Spec),
 
             %% Have reltool actually run
-            case reltool:eval_target_spec(Spec, code:root_dir(), TargetDir) of
+            case reltool:eval_target_spec(Spec, RootDir, TargetDir) of
                 ok ->
                     ok;
                 {error, Reason} ->
@@ -173,27 +211,12 @@ run_reltool(Server, _Config, ReltoolConfig) ->
                            [Reason])
             end,
 
-            %% Initialize overlay vars with some basics
-            %% (that can get overwritten)
-            OverlayVars0 = dict:from_list([{erts_vsn, "erts-" ++ erlang:system_info(version)},
-                                           {target_dir, TargetDir}]),
+            {BootRelName, BootRelVsn} = 
+                rebar_rel_utils:get_reltool_release_info(ReltoolConfig),
 
-            %% Load up any variables specified by overlay_vars
-            OverlayVars1 = overlay_vars(OverlayVars0, ReltoolConfig),
-            OverlayVars = rebar_templater:resolve_variables(dict:to_list(OverlayVars1),
-                                                            OverlayVars1),
+            ok = create_RELEASES(TargetDir, BootRelName, BootRelVsn),
 
-            %% Finally, overlay the files specified by the overlay section
-            case lists:keyfind(overlay, 1, ReltoolConfig) of
-                {overlay, Overlay} when is_list(Overlay) ->
-                    execute_overlay(Overlay, OverlayVars, rebar_utils:get_cwd(),
-                                    TargetDir);
-                false ->
-                    ?INFO("No {overlay, [...]} found in reltool.config.\n", []);
-                _ ->
-                    ?ABORT("{overlay, [...]} entry in reltool.config "
-                           "must be a list.\n", [])
-            end;
+            process_overlay(ReltoolConfig);
 
         {error, Reason} ->
             ?ABORT("Unable to generate spec: ~s\n", [Reason])
@@ -312,3 +335,15 @@ execute_overlay([Other | _Rest], _Vars, _BaseDir, _TargetDir) ->
 apply_file_info(InFile, OutFile) ->
     {ok, FileInfo} = file:read_file_info(InFile),
     ok = file:write_file_info(OutFile, FileInfo).
+
+create_RELEASES(TargetDir, RelName, RelVsn) ->
+    ReleasesDir = filename:join(TargetDir, "releases"),
+    case release_handler:create_RELEASES(TargetDir, ReleasesDir,
+              filename:join([ReleasesDir, RelVsn, RelName ++ ".rel"]),
+              filename:join(TargetDir, "lib")) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?ABORT("Failed to create RELEASES file: ~p\n",
+                   [Reason])
+    end.

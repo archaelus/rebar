@@ -38,6 +38,7 @@
          load_config/1,
          get_sys_tuple/1,
          get_target_dir/1,
+         get_root_dir/1,
          get_target_parent_dir/1]).
 
 -include("rebar.hrl").
@@ -55,11 +56,16 @@ is_rel_dir(Dir) ->
     end.
 
 %% Get release name and version from a reltool.config
-get_reltool_release_info(ReltoolConfig) ->
-    %% expect the first rel in the proplist to be the one you want
-    {sys, Config} = get_sys_tuple(ReltoolConfig),
+get_reltool_release_info([{sys, Config}| _]) ->
     {rel, Name, Ver, _} = proplists:lookup(rel, Config),
-    {Name, Ver}.
+    {Name, Ver};
+get_reltool_release_info(ReltoolFile) when is_list(ReltoolFile) ->
+    case file:consult(ReltoolFile) of
+        {ok, ReltoolConfig} ->
+            get_reltool_release_info(ReltoolConfig);
+        _ ->
+            ?ABORT("Failed to parse ~s~n", [ReltoolFile])
+    end.
 
 %% Get release name and version from a rel file
 get_rel_release_info(RelFile) ->
@@ -154,9 +160,40 @@ get_target_dir(ReltoolConfig) ->
     end.
 
 get_target_parent_dir(ReltoolConfig) ->
-    case lists:reverse(tl(lists:reverse(filename:split(get_target_dir(ReltoolConfig))))) of
+    TargetDir = get_target_dir(ReltoolConfig),
+    case lists:reverse(tl(lists:reverse(filename:split(TargetDir)))) of
         [] -> ".";
         Components -> filename:join(Components)
+    end.
+
+%%
+%% Look for root_dir in sys tuple and command line; fall back to
+%% code:root_dir().
+%%
+get_root_dir(ReltoolConfig) ->
+    {sys, SysInfo} = get_sys_tuple(ReltoolConfig),
+    SysRootDirTuple = lists:keyfind(root_dir, 1, SysInfo),
+    CmdRootDir = rebar_config:get_global(root_dir, undefined),
+    case {SysRootDirTuple, CmdRootDir} of
+        %% root_dir in sys typle and no root_dir on cmd-line
+        {{root_dir, SysRootDir}, undefined} ->
+            SysRootDir;
+        %% root_dir in sys typle and also root_dir on cmd-line
+        {{root_dir, SysRootDir}, CmdRootDir} when CmdRootDir =/= undefined ->
+            case string:equal(SysRootDir, CmdRootDir) of
+                true ->
+                    ok;
+                false ->
+                    ?WARN("overriding reltool.config root_dir with "
+                          "different command line root_dir~n", [])
+            end,
+            CmdRootDir;
+        %% no root_dir in sys typle and no root_dir on cmd-line
+        {false, undefined} ->
+            code:root_dir();
+        %% no root_dir in sys tuple but root_dir on cmd-line
+        {false, CmdRootDir} when CmdRootDir =/= undefined ->
+            CmdRootDir
     end.
 
 %% ===================================================================

@@ -67,7 +67,20 @@ run(RawArgs) ->
     ok = application:load(rebar),
     %% Parse out command line arguments -- what's left is a list of commands to
     %% run -- and start running commands
-    run_aux(parse_args(RawArgs)).
+    Args = parse_args(RawArgs),
+
+    case rebar_config:get_global(enable_profiling, false) of
+        true ->
+            io:format("Profiling!\n"),
+            try
+                fprof:apply(fun(A) -> run_aux(A) end, [Args])
+            after
+                fprof:profile(),
+                fprof:analyse([{dest, "fprof.analysis"}])
+            end;
+        _ ->
+            run_aux(Args)
+    end.
 
 run_aux(["help"]) ->
     help(),
@@ -135,6 +148,13 @@ parse_args(Args) ->
             %% Check options and maybe halt execution
             ok = show_info_maybe_halt(Options, NonOptArgs),
 
+            GlobalDefines = proplists:get_all_values(defines, Options),
+            rebar_config:set_global(defines, GlobalDefines),
+
+            %% Setup profiling flag
+            rebar_config:set_global(enable_profiling,
+                                    proplists:get_bool(profile, Options)),
+
             %% Set global variables based on getopt options
             set_global_flag(Options, verbose),
             set_global_flag(Options, force),
@@ -157,7 +177,7 @@ parse_args(Args) ->
             unabbreviate_command_names(filter_flags(NonOptArgs, []));
 
         {error, {Reason, Data}} ->
-            ?ERROR("Error: ~s ~p~n~n", [Reason, Data]),
+            ?ERROR("~s ~p~n~n", [Reason, Data]),
             help(),
             halt(1)
     end.
@@ -232,6 +252,7 @@ delete-deps                          Delete fetched dependencies
 list-deps                            List dependencies
 
 generate    [dump_spec=0/1]          Build release with reltool
+overlay                              Run reltool overlays only
 
 generate-upgrade  previous_release=path  Build an upgrade package
 
@@ -262,8 +283,10 @@ option_spec_list() ->
      {verbose,  $v, "verbose",  undefined, "Be verbose about what gets done"},
      {version,  $V, "version",  undefined, "Show version information"},
      {force,    $f, "force",    undefined, "Force"},
+     {defines,  $D, undefined,  string,    "Define compiler macro"},
      {jobs,     $j, "jobs",     integer,   JobsHelp},
-     {config,   $C, "config",   string,    "Rebar config file to use"}
+     {config,   $C, "config",   string,    "Rebar config file to use"},
+     {profile,  $p, "profile",  undefined, "Profile this run of rebar"}
     ].
 
 %%
@@ -289,7 +312,7 @@ command_names() ->
     ["check-deps", "clean", "compile", "create", "create-app", "create-node",
      "ct", "delete-deps", "doc", "eunit", "generate", "generate-appups",
      "generate-upgrade", "get-deps", "help", "list-deps", "list-templates",
-     "update-deps", "version", "xref"].
+     "update-deps", "overlay", "version", "xref"].
 
 unabbreviate_command_names([]) ->
     [];

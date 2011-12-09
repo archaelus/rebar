@@ -139,6 +139,8 @@ vcs_vsn(Vcs, Dir) ->
         {unknown, VsnString} ->
             ?DEBUG("vcs_vsn: Unknown VCS atom in vsn field: ~p\n", [Vcs]),
             VsnString;
+        {cmd, CmdString} ->
+            vcs_vsn_invoke(CmdString, Dir);
         Cmd ->
             %% If there is a valid VCS directory in the application directory,
             %% use that version info
@@ -169,10 +171,18 @@ vcs_vsn_cmd(git) ->
     %% Explicitly git-describe a committish to accommodate for projects
     %% in subdirs which don't have a GIT_DIR. In that case we will
     %% get a description of the last commit that touched the subdir.
-    "git describe --always --tags `git log -n 1 --pretty=format:%h .`";
+    case os:type() of
+        {win32,nt} ->
+            "FOR /F \"usebackq tokens=* delims=\" %i in "
+            "(`git log -n 1 \"--pretty=format:%h\" .`) do "
+            "@git describe --always --tags %i";
+        _ ->
+            "git describe --always --tags `git log -n 1 --pretty=format:%h .`"
+    end;
 vcs_vsn_cmd(hg)  -> "hg identify -i";
 vcs_vsn_cmd(bzr) -> "bzr revno";
 vcs_vsn_cmd(svn) -> "svnversion";
+vcs_vsn_cmd({cmd, _Cmd}=Custom) -> Custom;
 vcs_vsn_cmd(Version) -> {unknown, Version}.
 
 vcs_vsn_invoke(Cmd, Dir) ->

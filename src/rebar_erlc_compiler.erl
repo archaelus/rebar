@@ -70,13 +70,6 @@
 
 -spec compile(Config::rebar_config:config(), AppFile::file:filename()) -> 'ok'.
 compile(Config, _AppFile) ->
-    ?DEPRECATED(xrl_opts, fail_on_warning, warnings_as_errors,
-                rebar_config:get_list(Config, xrl_opts, []),
-                "once R14B04 is released"),
-    ?DEPRECATED(yrl_opts, fail_on_warning, warnings_as_errors,
-                rebar_config:get_list(Config, yrl_opts, []),
-                "once R14B04 is released"),
-
     rebar_base_compiler:run(Config,
                             check_files(rebar_config:get_local(
                                           Config, xrl_first_files, [])),
@@ -129,14 +122,8 @@ doterl_compile(Config, OutDir) ->
 
 doterl_compile(Config, OutDir, MoreSources) ->
     FirstErls = rebar_config:get_list(Config, erl_first_files, []),
-    RawErlOpts = filter_defines(rebar_config:get(Config, erl_opts, []), []),
-    ErlOpts = case proplists:is_defined(no_debug_info, RawErlOpts) of
-                  true ->
-                      [O || O <- RawErlOpts, O =/= no_debug_info];
-                  _ ->
-                      [debug_info|RawErlOpts]
-              end,
-    ?DEBUG("erl_opts ~p~n",[ErlOpts]),
+    ErlOpts = erl_opts(Config),
+    ?DEBUG("erl_opts ~p~n", [ErlOpts]),
     %% Support the src_dirs option allowing multiple directories to
     %% contain erlang source. This might be used, for example, should
     %% eunit tests be separated from the core application source.
@@ -176,6 +163,18 @@ doterl_compile(Config, OutDir, MoreSources) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+erl_opts(Config) ->
+    RawErlOpts = filter_defines(rebar_config:get(Config, erl_opts, []), []),
+    GlobalDefines = [{d, list_to_atom(D)} ||
+                        D <- rebar_config:get_global(defines, [])],
+    Opts = GlobalDefines ++ RawErlOpts,
+    case proplists:is_defined(no_debug_info, Opts) of
+        true ->
+            [O || O <- Opts, O =/= no_debug_info];
+        false ->
+            [debug_info|Opts]
+    end.
 
 -spec include_path(Source::file:filename(),
                    Config::rebar_config:config()) -> [file:filename(), ...].
@@ -287,15 +286,13 @@ compile_mib(Source, Target, Config) ->
 -spec compile_xrl(Source::file:filename(), Target::file:filename(),
                   Config::rebar_config:config()) -> 'ok'.
 compile_xrl(Source, Target, Config) ->
-    Opts = [{scannerfile, Target}, {return, true}
-            | rebar_config:get(Config, xrl_opts, [])],
+    Opts = [{scannerfile, Target} | rebar_config:get(Config, xrl_opts, [])],
     compile_xrl_yrl(Source, Target, Opts, leex).
 
 -spec compile_yrl(Source::file:filename(), Target::file:filename(),
                   Config::rebar_config:config()) -> 'ok'.
 compile_yrl(Source, Target, Config) ->
-    Opts = [{parserfile, Target}, {return, true}
-            | rebar_config:get(Config, yrl_opts, [])],
+    Opts = [{parserfile, Target} | rebar_config:get(Config, yrl_opts, [])],
     compile_xrl_yrl(Source, Target, Opts, yecc).
 
 -spec compile_xrl_yrl(Source::file:filename(), Target::file:filename(),
@@ -304,16 +301,8 @@ compile_xrl_yrl(Source, Target, Opts, Mod) ->
     case needs_compile(Source, Target, []) of
         true ->
             case Mod:file(Source, Opts) of
-                {ok, _, []} ->
+                {ok, _} ->
                     ok;
-                {ok, _, _Warnings} ->
-                    %% TODO: remove once R14B04 is released
-                    case lists:member(fail_on_warning, Opts) of
-                        true ->
-                            ?FAIL;
-                        false ->
-                            ok
-                    end;
                 _X ->
                     ?FAIL
             end;
