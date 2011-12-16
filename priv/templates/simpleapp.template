@@ -5,3 +5,4 @@
 {template, "simpleapp_sup.erl", "src/{{appid}}_sup.erl"}.
 {template, "simplelogging.hrl", "include/{{appid}}_log.hrl"}.
 {template, "simple_rebar.config", "rebar.config"}.
+{template, "simpleapp_gitignore", ".gitignore"}.
