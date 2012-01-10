@@ -63,40 +63,7 @@
 %% Public API
 %% ===================================================================
 
-eunit(Config, AppFile) ->
-    %% Check for app global parameter; this is a comma-delimited list
-    %% of apps on which we want to run eunit
-    case rebar_config:get_global(app, undefined) of
-        undefined ->
-            %% No app parameter specified, check the skip list..
-            case rebar_config:get_global(skip_app, undefined) of
-                undefined ->
-                    %% no skip list, run everything..
-                    ok;
-                SkipApps ->
-                    TargetApps = [list_to_atom(A) ||
-                                     A <- string:tokens(SkipApps, ",")],
-                    ThisApp = rebar_app_utils:app_name(AppFile),
-                    case lists:member(ThisApp, TargetApps) of
-                        false ->
-                            ok;
-                        true ->
-                            ?DEBUG("Skipping eunit on app: ~p\n", [ThisApp]),
-                            throw(ok)
-                    end
-            end;
-        Apps ->
-            TargetApps = [list_to_atom(A) || A <- string:tokens(Apps, ",")],
-            ThisApp = rebar_app_utils:app_name(AppFile),
-            case lists:member(ThisApp, TargetApps) of
-                true ->
-                    ok;
-                false ->
-                    ?DEBUG("Skipping eunit on app: ~p\n", [ThisApp]),
-                    throw(ok)
-            end
-    end,
-
+eunit(Config, _AppFile) ->
     %% Make sure ?EUNIT_DIR/ and ebin/ directory exists (tack on dummy module)
     ok = filelib:ensure_dir(eunit_dir() ++ "/foo"),
     ok = filelib:ensure_dir(ebin_dir() ++ "/foo"),
@@ -510,7 +477,11 @@ kill_extras(Pids) ->
     %% This list may require changes as OTP versions and/or
     %% rebar use cases change.
     KeepProcs = [cover_server, eunit_server,
-                 eqc, eqc_license, eqc_locked],
+                 eqc, eqc_license, eqc_locked,
+                 %% inet_gethost_native is started on demand, when
+                 %% doing name lookups. It is under kernel_sup, under
+                 %% a supervisor_bridge.
+                 inet_gethost_native],
     Killed = [begin
                   Info = case erlang:process_info(Pid) of
                              undefined -> [];
