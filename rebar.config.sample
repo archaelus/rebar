@@ -35,22 +35,16 @@
 
 %% == Port Compiler ==
 
-%% List of filenames or wildcards to be compiled. May also contain a tuple
-%% consisting of a regular expression to be applied against the system
-%% architecture and a list of filenames or wildcards to include should the
-%% expression pass. Default is `"c_src/*.c"'
-{port_sources, ["c_src/*.c", {"R14", ["c_src/*.c"]}]}.
-
 %% Port compilation environment variables. See rebar_port_compiler.erl for
 %% more info. Default is `[]'
-{port_envs, []}.
+{port_env, []}.
 
-%% Custom name of the port driver .so file. Defaults to `<Application>_drv.so'.
-{so_name, "driver.so"}.
-
-%% so_specs - useful for building multiple *.so files
-%%            from one or more object files
-{so_specs, [{"priv/so_name.so", ["c_src/object_file_name.o"]}]}.
+%% port_specs
+%% List of filenames or wildcards to be compiled. May also contain a tuple
+%% consisting of a regular expression to be applied against the system
+%% architecture as a filter.
+{port_specs, [{"priv/so_name.so", ["c_src/*.c"]},
+              {"linux", "priv/hello_linux", ["c_src/hello_linux.c"]]}.
 
 %% == LFE Compiler ==
 
@@ -119,7 +113,10 @@
 {deps, [application_name,
         {application_name, "1.0.*"},
         {application_name, "1.0.*",
-         {git, "git://github.com/basho/rebar.git", {branch, "master"}}}]}.
+         {git, "git://github.com/basho/rebar.git", {branch, "master"}}},
+        {application_name, "1.0.*",
+         {git, "git://github.com/basho/rebar.git", {branch, "master"}},
+         [{alt_url, "https://github.com/basho/rebar.git"}]}]}.
 
 %% == Subdirectories ==
 
@@ -154,5 +151,15 @@
 %% == xref ==
 
 {xref_warnings, false}.
+
 %% xref checks to run
 {xref_checks, [exports_not_used, undefined_function_calls]}.
+
+%% Optional custom xref queries (xref manual has details) specified as
+%%     {xref_queries, [{query_string(), expected_query_result()},...]}
+%% The following for example removes all references to ejabberd:*_msg/4
+%% functions from undefined external function calls as those are in a
+%% generated module
+{xref_queries,
+  [{"(XC - UC) || (XU - X - B"
+    " - (\"ejabberd_logger\":\".*_msg\"/\"4\"))",[]}]}.
