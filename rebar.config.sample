@@ -37,14 +37,16 @@
 
 %% Port compilation environment variables. See rebar_port_compiler.erl for
 %% more info. Default is `[]'
-{port_env, []}.
+{port_env, [{"CFLAGS", "$CFLAGS -Ifoo"},
+            {"freebsd", "LDFLAGS", "$LDFLAGS -lfoo"}]}.
 
 %% port_specs
 %% List of filenames or wildcards to be compiled. May also contain a tuple
 %% consisting of a regular expression to be applied against the system
 %% architecture as a filter.
 {port_specs, [{"priv/so_name.so", ["c_src/*.c"]},
-              {"linux", "priv/hello_linux", ["c_src/hello_linux.c"]]}.
+              {"linux", "priv/hello_linux", ["c_src/hello_linux.c"]},
+              {"linux", "priv/hello_linux", ["c_src/*.c"], [{env, []}]}}.
 
 %% == LFE Compiler ==
 
@@ -113,10 +115,7 @@
 {deps, [application_name,
         {application_name, "1.0.*"},
         {application_name, "1.0.*",
-         {git, "git://github.com/basho/rebar.git", {branch, "master"}}},
-        {application_name, "1.0.*",
-         {git, "git://github.com/basho/rebar.git", {branch, "master"}},
-         [{alt_url, "https://github.com/basho/rebar.git"}]}]}.
+         {git, "git://github.com/basho/rebar.git", {branch, "master"}}}]}.
 
 %% == Subdirectories ==
 
@@ -161,5 +160,5 @@
 %% functions from undefined external function calls as those are in a
 %% generated module
 {xref_queries,
-  [{"(XC - UC) || (XU - X - B"
-    " - (\"ejabberd_logger\":\".*_msg\"/\"4\"))",[]}]}.
+ [{"(XC - UC) || (XU - X - B"
+   " - (\"ejabberd_logger\":\".*_msg\"/\"4\"))",[]}]}.
