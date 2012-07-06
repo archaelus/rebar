@@ -57,6 +57,8 @@ rm_rf(Target) ->
     end.
 
 -spec cp_r(Sources::list(string()), Dest::file:filename()) -> ok.
+cp_r([], _Dest) ->
+    ok;
 cp_r(Sources, Dest) ->
     case os:type() of
         {unix, _} ->
@@ -106,7 +108,7 @@ delete_each([File | Rest]) ->
             delete_each(Rest);
         {error, Reason} ->
             ?ERROR("Failed to delete file ~s: ~p\n", [File, Reason]),
-            ?FAIL
+            ?ABORT
     end.
 
 %% ===================================================================
