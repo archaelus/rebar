@@ -47,13 +47,13 @@ xref(Config, _) ->
 
     xref:set_default(xref, [{warnings,
                              rebar_config:get(Config, xref_warnings, false)},
-                            {verbose, rebar_config:is_verbose()}]),
+                            {verbose, rebar_config:is_verbose(Config)}]),
 
     {ok, _} = xref:add_directory(xref, "ebin"),
 
     %% Save the code path prior to doing anything
     OrigPath = code:get_path(),
-    true = code:add_path(filename:join(rebar_utils:get_cwd(), "ebin")),
+    true = code:add_path(rebar_utils:ebin_dir()),
 
     %% Get list of xref checks we want to run
     XrefChecks = rebar_config:get(Config, xref_checks,
@@ -90,7 +90,7 @@ xref(Config, _) ->
 
     case lists:member(false, [ExportsNoWarn, UndefNoWarn, QueryNoWarn]) of
         true ->
-            ?ABORT;
+            ?FAIL;
         false ->
             ok
     end.
