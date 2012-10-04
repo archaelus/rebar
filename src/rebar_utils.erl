@@ -356,7 +356,8 @@ patch_on_windows(Cmd, Env) ->
                                        expand_env_variable(Acc, Key, Value)
                                end, Cmd, Env),
             %% Remove left-over vars
-            re:replace(Cmd1, "\\\$\\w+|\\\${\\w+}", "", [global, {return, list}]);
+            re:replace(Cmd1, "\\\$\\w+|\\\${\\w+}", "",
+                       [global, {return, list}]);
         _ ->
             Cmd
     end.
@@ -475,20 +476,11 @@ vcs_vsn_1(Vcs, Dir) ->
             end
     end.
 
-vcs_vsn_cmd(git) ->
-    %% git describe the last commit that touched CWD
-    %% required for correct versioning of apps in subdirs, such as apps/app1
-    case os:type() of
-        {win32,nt} ->
-            "FOR /F \"usebackq tokens=* delims=\" %i in "
-                "(`git log -n 1 \"--pretty=format:%h\" .`) do "
-                "@git describe --always --tags %i";
-        _ ->
-            "git describe --always --tags `git log -n 1 --pretty=format:%h .`"
-    end;
-vcs_vsn_cmd(hg)  -> "hg identify -i";
-vcs_vsn_cmd(bzr) -> "bzr revno";
-vcs_vsn_cmd(svn) -> "svnversion";
+vcs_vsn_cmd(git)    -> "git describe --always --tags";
+vcs_vsn_cmd(hg)     -> "hg identify -i";
+vcs_vsn_cmd(bzr)    -> "bzr revno";
+vcs_vsn_cmd(svn)    -> "svnversion";
+vcs_vsn_cmd(fossil) -> "fossil info";
 vcs_vsn_cmd({cmd, _Cmd}=Custom) -> Custom;
 vcs_vsn_cmd(Version) -> {unknown, Version}.
 

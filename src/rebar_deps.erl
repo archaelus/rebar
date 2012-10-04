@@ -184,8 +184,9 @@ setup_env(Config) ->
 %% need all deps in same dir and should be the one set by the root rebar.config
 %% Sets a default if root config has no deps_dir set
 set_shared_deps_dir(Config, []) ->
-    rebar_config:set_xconf(Config, deps_dir,
-                           rebar_config:get_local(Config, deps_dir, "deps"));
+    GlobalDepsDir = rebar_config:get_global(Config, deps_dir, "deps"),
+    DepsDir = rebar_config:get_local(Config, deps_dir, GlobalDepsDir),
+    rebar_config:set_xconf(Config, deps_dir, DepsDir);
 set_shared_deps_dir(Config, _DepsDir) ->
     Config.
 
@@ -410,7 +411,19 @@ download_source(AppDir, {svn, Url, Rev}) ->
                    [{cd, filename:dirname(AppDir)}]);
 download_source(AppDir, {rsync, Url}) ->
     ok = filelib:ensure_dir(AppDir),
-    rebar_utils:sh(?FMT("rsync -az --delete ~s/ ~s", [Url, AppDir]), []).
+    rebar_utils:sh(?FMT("rsync -az --delete ~s/ ~s", [Url, AppDir]), []);
+download_source(AppDir, {fossil, Url}) ->
+    download_source(AppDir, {fossil, Url, ""});
+download_source(AppDir, {fossil, Url, latest}) ->
+    download_source(AppDir, {fossil, Url, ""});
+download_source(AppDir, {fossil, Url, Version}) ->
+    Repository = filename:join(AppDir, filename:basename(AppDir) ++ ".fossil"),
+    ok = filelib:ensure_dir(Repository),
+    ok = file:set_cwd(AppDir),
+    rebar_utils:sh(?FMT("fossil clone ~s ~s", [Url, Repository]),
+                   [{cd, AppDir}]),
+    rebar_utils:sh(?FMT("fossil open ~s ~s --nested", [Repository, Version]),
+                   []).
 
 update_source(Config, Dep) ->
     %% It's possible when updating a source, that a given dep does not have a
@@ -453,7 +466,16 @@ update_source1(AppDir, {hg, _Url, Rev}) ->
 update_source1(AppDir, {bzr, _Url, Rev}) ->
     rebar_utils:sh(?FMT("bzr update -r ~s", [Rev]), [{cd, AppDir}]);
 update_source1(AppDir, {rsync, Url}) ->
-    rebar_utils:sh(?FMT("rsync -az --delete ~s/ ~s",[Url,AppDir]),[]).
+    rebar_utils:sh(?FMT("rsync -az --delete ~s/ ~s",[Url,AppDir]),[]);
+update_source1(AppDir, {fossil, Url}) ->
+    update_source1(AppDir, {fossil, Url, ""});
+update_source1(AppDir, {fossil, Url, latest}) ->
+    update_source1(AppDir, {fossil, Url, ""});
+update_source1(AppDir, {fossil, _Url, Version}) ->
+    ok = file:set_cwd(AppDir),
+    rebar_utils:sh("fossil pull", [{cd, AppDir}]),
+    rebar_utils:sh(?FMT("fossil update ~s", [Version]), []).
+
 
 %% ===================================================================
 %% Source helper functions
@@ -464,7 +486,8 @@ source_engine_avail(Source) ->
     source_engine_avail(Name, Source).
 
 source_engine_avail(Name, Source)
-  when Name == hg; Name == git; Name == svn; Name == bzr; Name == rsync ->
+  when Name == hg; Name == git; Name == svn; Name == bzr; Name == rsync;
+       Name == fossil ->
     case vcs_client_vsn(Name) >= required_vcs_client_vsn(Name) of
         true ->
             true;
@@ -485,11 +508,12 @@ vcs_client_vsn(Path, VsnArg, VsnRegex) ->
             false
     end.
 
-required_vcs_client_vsn(hg)    -> {1, 1};
-required_vcs_client_vsn(git)   -> {1, 5};
-required_vcs_client_vsn(bzr)   -> {2, 0};
-required_vcs_client_vsn(svn)   -> {1, 6};
-required_vcs_client_vsn(rsync) -> {2, 0}.
+required_vcs_client_vsn(hg)     -> {1, 1};
+required_vcs_client_vsn(git)    -> {1, 5};
+required_vcs_client_vsn(bzr)    -> {2, 0};
+required_vcs_client_vsn(svn)    -> {1, 6};
+required_vcs_client_vsn(rsync)  -> {2, 0};
+required_vcs_client_vsn(fossil) -> {1, 0}.
 
 vcs_client_vsn(hg) ->
     vcs_client_vsn(rebar_utils:find_executable("hg"), " --version",
@@ -505,7 +529,10 @@ vcs_client_vsn(svn) ->
                    "svn, version (\\d+).(\\d+)");
 vcs_client_vsn(rsync) ->
     vcs_client_vsn(rebar_utils:find_executable("rsync"), " --version",
-                   "rsync  version (\\d+).(\\d+)").
+                   "rsync  version (\\d+).(\\d+)");
+vcs_client_vsn(fossil) ->
+    vcs_client_vsn(rebar_utils:find_executable("fossil"), " version",
+                   "version (\\d+).(\\d+)").
 
 has_vcs_dir(git, Dir) ->
     filelib:is_dir(filename:join(Dir, ".git"));
